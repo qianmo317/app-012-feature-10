@@ -4,7 +4,9 @@ import { ScaleRenderer } from '../renderer/scale';
 import { UIRenderer } from '../renderer/ui';
 import { GameManager } from './state';
 import { getHerbByName } from '../herbs';
+import { isTierAccepted } from '../weighing';
 import { resumeAudio, playDrawerSound, playDropSound, playPointerSound, playErrorSound, playSuccessSound } from '../audio/synth';
+import type { ResultRow } from '../types';
 
 export class ApothecaryGame {
   canvas: GameCanvas;
@@ -46,6 +48,25 @@ export class ApothecaryGame {
     this.render();
   }
 
+  /** 按处方顺序组装结算行：每味药收下的那次 + 此前被打回的重抓尝试 */
+  buildResultRows(): ResultRow[] {
+    if (!this.game.prescription) return [];
+    const rows: ResultRow[] = [];
+    for (const item of this.game.prescription.items) {
+      const record = this.game.records.get(item.herb);
+      if (!record) continue;
+      const accepted = record.attempts.find(a => a.accepted);
+      if (!accepted) continue;
+      rows.push({
+        herb: item.herb,
+        target: item.grams,
+        accepted,
+        rejected: record.attempts.filter(a => !a.accepted),
+      });
+    }
+    return rows;
+  }
+
   render(): void {
     const ctx = this.canvas.ctx;
     const w = this.canvas.width;
@@ -71,15 +92,37 @@ export class ApothecaryGame {
     this.ui.drawPackageArea(ctx, w, h, this.game.packages);
     this.ui.drawInstructions(ctx, w, h);
 
-    if (this.game.levelConfig.requireTare) {
-      this.ui.drawTareButton(ctx, this.scale.x + this.scale.w - 60, this.scale.y + this.scale.h + 10, false);
-    }
-
     if (this.game.currentHerb) {
       const herbMeta = getHerbByName(this.game.currentHerb);
       if (herbMeta) {
         this.drawHerbPile(ctx, this.scale.x + this.scale.w / 2 - 20, this.scale.y + this.scale.h - 40, herbMeta.color, Math.min(40, this.game.currentWeight * 2));
       }
+
+      // 秤下控制条（+1g / -1g / 归零 / 确认）与实时四档提示
+      this.ui.drawWeighControls(ctx, this.scale.x, this.scale.y, this.scale.w, this.scale.h);
+      const prev = this.game.currentPrevAttempt();
+      this.ui.drawLiveTier(
+        ctx,
+        this.scale.x,
+        this.scale.y,
+        this.scale.w,
+        this.scale.h,
+        this.game.currentWeight,
+        this.game.targetGrams,
+        this.game.levelConfig.tolerance,
+        this.game.currentAttemptNo(),
+        prev ? prev.deltaG : null,
+      );
+
+      // 重抓时确认横幅一直挂着，直到再次按确认
+      if (this.game.lastConfirm && !this.game.lastConfirm.accepted) {
+        this.ui.drawConfirmBanner(ctx, w, this.game.lastConfirm);
+      }
+    }
+
+    // 收下（准/压线）后的短暂准信
+    if (this.game.phase === 'playing' && this.game.lastConfirm?.accepted && performance.now() - this.game.acceptedToastAt < 1600) {
+      this.ui.drawConfirmBanner(ctx, w, this.game.lastConfirm);
     }
 
     if (this.game.draggingHerb) {
@@ -104,7 +147,7 @@ export class ApothecaryGame {
         this.ui.drawReview(ctx, w, h, this.game.reviewQuestion.herb, this.game.reviewQuestion.options, this.game.reviewSelected, this.game.reviewResult);
       }
     } else if (this.game.phase === 'result') {
-      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.results, this.game.results.every(r => r.ok));
+      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.buildResultRows(), this.game.results.length === this.game.prescription?.items.length, this.game.resultDetailOpen);
     } else if (this.game.phase === 'gameover') {
       this.ui.drawGameOver(ctx, w, h, this.game.state.score, this.game.state.level);
     }
@@ -187,6 +230,37 @@ export class ApothecaryGame {
     });
   }
 
+  /** 处理称重控制条按钮，返回是否命中（命中则拦截其他点击） */
+  private handleWeighControl(x: number, y: number): boolean {
+    const btn = this.ui.buttonRects.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+    if (!btn) return false;
+    if (btn.action === 'weight+') {
+      this.game.addWeight(1);
+      playPointerSound();
+    } else if (btn.action === 'weight-') {
+      this.game.addWeight(-1);
+      playPointerSound();
+    } else if (btn.action === 'tare') {
+      this.game.tare();
+      playPointerSound();
+    } else if (btn.action === 'confirm') {
+      this.confirmWeighing();
+    } else {
+      return false;
+    }
+    return true;
+  }
+
+  private confirmWeighing(): void {
+    const feedback = this.game.confirmWeight();
+    if (!feedback) return;
+    if (isTierAccepted(feedback.tier)) {
+      playSuccessSound();
+    } else {
+      playErrorSound();
+    }
+  }
+
   handlePointerDown(x: number, y: number): void {
     if (this.game.phase === 'menu') {
       const btn = this.ui.buttonRects.find(b => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
@@ -222,6 +296,8 @@ export class ApothecaryGame {
         } else if (btn.action === 'retry') {
           this.game.retryLevel();
           this.cabinet.setHerbs(this.game.herbs);
+        } else if (btn.action === 'toggle-detail') {
+          this.game.toggleResultDetail();
         } else if (btn.action === 'menu') {
           this.game.phase = 'menu';
         }
@@ -244,23 +320,8 @@ export class ApothecaryGame {
     }
 
     if (this.game.phase === 'weighing') {
-      const sx = this.scale.x;
-      const sy = this.scale.y + this.scale.h + 10;
-      if (x >= sx && x <= sx + 40 && y >= sy && y <= sy + 32) {
-        this.game.addWeight(1);
-        playPointerSound();
-        return;
-      }
-      if (x >= sx + 50 && x <= sx + 90 && y >= sy && y <= sy + 32) {
-        this.game.addWeight(-1);
-        playPointerSound();
-        return;
-      }
-      if (x >= sx + 100 && x <= sx + 160 && y >= sy && y <= sy + 32) {
-        this.game.tare();
-        playPointerSound();
-        return;
-      }
+      // 先判定控制条（+/-、归零、确认），再处理拖药到秤盘
+      if (this.handleWeighControl(x, y)) return;
 
       const scaleArea = { x: this.scale.x, y: this.scale.y, w: this.scale.w, h: this.scale.h };
       if (x >= scaleArea.x && x <= scaleArea.x + scaleArea.w && y >= scaleArea.y && y <= scaleArea.y + scaleArea.h) {
@@ -317,14 +378,7 @@ export class ApothecaryGame {
 
     if (this.game.phase === 'weighing') {
       if (key === ' ' || key === 'Enter') {
-        const result = this.game.confirmWeight();
-        if (result) {
-          if (result.ok) {
-            playSuccessSound();
-          } else {
-            playErrorSound();
-          }
-        }
+        this.confirmWeighing();
       } else if (key === 'z' || key === 'Z') {
         this.game.tare();
         playPointerSound();
@@ -340,13 +394,15 @@ export class ApothecaryGame {
 
     if (this.game.phase === 'result') {
       if (key === 'Enter' || key === ' ') {
-        const passed = this.game.results.every(r => r.ok);
+        const passed = this.game.results.length === this.game.prescription?.items.length;
         if (passed) {
           this.game.nextLevel();
         } else {
           this.game.retryLevel();
         }
         this.cabinet.setHerbs(this.game.herbs);
+      } else if (key === 'd' || key === 'D') {
+        this.game.toggleResultDetail();
       }
       return;
     }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { judgeWeight, getWeightStatus, calculatePointerPosition, fineTuneWeight } from '../src/weighing';
+import { judgeWeight, getWeightStatus, getTier, isTierAccepted, TIER_TEXT, TIER_FEEDBACK, formatDelta, calculatePointerPosition, fineTuneWeight } from '../src/weighing';
 
 describe('judgeWeight', () => {
   it('should pass when exact match', () => {
@@ -53,6 +53,44 @@ describe('getWeightStatus', () => {
   it('should return fail for exceeding 2x tolerance', () => {
     const result = judgeWeight(13, 10, 1);
     expect(getWeightStatus(result, 1)).toBe('fail');
+  });
+
+  it('judgeWeight should carry the tier directly', () => {
+    expect(judgeWeight(10, 10, 1).tier).toBe('perfect');
+    expect(judgeWeight(10.5, 10, 1).tier).toBe('good');
+    expect(judgeWeight(10.7, 10, 0.5).tier).toBe('warning');
+    expect(judgeWeight(13, 10, 1).tier).toBe('fail');
+  });
+});
+
+describe('四档界面出口', () => {
+  it('getTier 边界：0.3/1/2 倍 tolerance', () => {
+    expect(getTier(0.3, 1)).toBe('perfect');
+    expect(getTier(0.31, 1)).toBe('good');
+    expect(getTier(1.0, 1)).toBe('good');
+    expect(getTier(1.01, 1)).toBe('warning');
+    expect(getTier(2.0, 1)).toBe('warning');
+    expect(getTier(2.01, 1)).toBe('fail');
+  });
+
+  it('isTierAccepted 只有 perfect/good 收下', () => {
+    expect(isTierAccepted('perfect')).toBe(true);
+    expect(isTierAccepted('good')).toBe(true);
+    expect(isTierAccepted('warning')).toBe(false);
+    expect(isTierAccepted('fail')).toBe(false);
+  });
+
+  it('四档都有面向玩家的文案且两两不同', () => {
+    const labels = [TIER_TEXT.perfect, TIER_TEXT.good, TIER_TEXT.warning, TIER_TEXT.fail];
+    expect(new Set(labels).size).toBe(4);
+    expect(TIER_FEEDBACK.good).toContain('校');
+    expect(TIER_FEEDBACK.warning).toContain('重抓');
+  });
+
+  it('formatDelta 带正负号', () => {
+    expect(formatDelta(1.5)).toBe('+1.5g');
+    expect(formatDelta(-2)).toBe('-2.0g');
+    expect(formatDelta(0)).toBe('0.0g');
   });
 });
 
