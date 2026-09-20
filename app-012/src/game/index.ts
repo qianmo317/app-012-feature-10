@@ -99,12 +99,16 @@ export class ApothecaryGame {
       }
     }
 
+    if (this.game.lastFeedback && (this.game.phase === 'playing' || this.game.phase === 'weighing')) {
+      this.ui.drawWeighFeedback(ctx, w, this.game.lastFeedback);
+    }
+
     if (this.game.phase === 'review') {
       if (this.game.reviewQuestion) {
         this.ui.drawReview(ctx, w, h, this.game.reviewQuestion.herb, this.game.reviewQuestion.options, this.game.reviewSelected, this.game.reviewResult);
       }
     } else if (this.game.phase === 'result') {
-      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.results, this.game.results.every(r => r.ok));
+      this.ui.drawResult(ctx, w, h, this.game.state.score, this.game.state.level, this.game.results, this.game.scoreDetails, this.game.attempts, this.game.lastPassed);
     } else if (this.game.phase === 'gameover') {
       this.ui.drawGameOver(ctx, w, h, this.game.state.score, this.game.state.level);
     }
@@ -340,8 +344,7 @@ export class ApothecaryGame {
 
     if (this.game.phase === 'result') {
       if (key === 'Enter' || key === ' ') {
-        const passed = this.game.results.every(r => r.ok);
-        if (passed) {
+        if (this.game.lastPassed) {
           this.game.nextLevel();
         } else {
           this.game.retryLevel();

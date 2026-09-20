@@ -45,18 +45,22 @@ describe('scoreRound', () => {
     expect(slow.timePenalty).toBeLessThan(fast.timePenalty);
   });
 
-  it('should zero precision bonus and add penalty for fail', () => {
+  it('should give zero score for fail result (整味重抓)', () => {
     const result = judgeWeight(15, 10, 1);
     const score = scoreRound(result, 1, 0, 5, 60);
+    expect(score.base).toBe(0);
     expect(score.precisionBonus).toBe(0);
-    expect(score.timePenalty).toBeLessThan(-20);
+    expect(score.comboBonus).toBe(0);
+    expect(score.timePenalty).toBe(0);
     expect(score.total).toBe(0);
   });
 
-  it('should halve precision bonus for warning', () => {
+  it('should give zero score for warning result (偏出范围整味重抓)', () => {
     const result = judgeWeight(11.2, 10, 0.5);
     const score = scoreRound(result, 0.5, 0, 5, 60);
-    expect(score.precisionBonus).toBeLessThan(25);
+    expect(score.total).toBe(0);
+    expect(score.base).toBe(0);
+    expect(score.precisionBonus).toBe(0);
   });
 
   it('should never return negative total', () => {

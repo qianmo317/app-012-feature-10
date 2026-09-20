@@ -1,15 +1,21 @@
 import type { ScoreBreakdown, WeighResult } from './types';
 
 export function scoreRound(result: WeighResult, tolerance: number, combo: number, timeUsed: number, timeLimit: number | null): ScoreBreakdown {
-  const base = 100;
   const absDelta = Math.abs(result.deltaG);
+
+  // 偏出允许范围（warning / fail）：整味重抓，本次不计分
+  if (absDelta > tolerance) {
+    return { base: 0, precisionBonus: 0, comboBonus: 0, timePenalty: 0, total: 0 };
+  }
+
+  const base = 100;
 
   let precisionBonus = 0;
   if (absDelta <= tolerance * 0.3) {
     precisionBonus = 50;
   } else if (absDelta <= tolerance * 0.6) {
     precisionBonus = 30;
-  } else if (absDelta <= tolerance) {
+  } else {
     precisionBonus = 10;
   }
 
@@ -22,17 +28,7 @@ export function scoreRound(result: WeighResult, tolerance: number, combo: number
     else if (ratio > 0.6) timePenalty = -10;
   }
 
-  let total = 0;
-  if (absDelta > tolerance * 2) {
-    precisionBonus = 0;
-    timePenalty -= 30;
-    total = 0;
-  } else if (absDelta > tolerance) {
-    precisionBonus = Math.floor(precisionBonus / 2);
-    total = Math.max(0, base + precisionBonus + comboBonus + timePenalty);
-  } else {
-    total = Math.max(0, base + precisionBonus + comboBonus + timePenalty);
-  }
+  const total = Math.max(0, base + precisionBonus + comboBonus + timePenalty);
 
   return { base, precisionBonus, comboBonus, timePenalty, total };
 }

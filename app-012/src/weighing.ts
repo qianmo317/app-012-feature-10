@@ -1,13 +1,15 @@
-import type { WeighResult } from './types';
+import type { WeighResult, WeighStatus } from './types';
 
 export function judgeWeight(actual: number, target: number, tolerance: number): WeighResult {
   const deltaG = actual - target;
   const absDelta = Math.abs(deltaG);
   const ok = absDelta <= tolerance;
-  return { herb: '', target, actual, ok, deltaG };
+  const result: WeighResult = { herb: '', target, actual, ok, deltaG, status: 'fail' };
+  result.status = getWeightStatus(result, tolerance);
+  return result;
 }
 
-export function getWeightStatus(result: WeighResult, tolerance: number): 'perfect' | 'good' | 'warning' | 'fail' {
+export function getWeightStatus(result: WeighResult, tolerance: number): WeighStatus {
   const absDelta = Math.abs(result.deltaG);
   if (absDelta <= tolerance * 0.3) return 'perfect';
   if (absDelta <= tolerance) return 'good';

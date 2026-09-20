@@ -32,6 +32,13 @@ describe('judgeWeight', () => {
     expect(result.actual).toBe(10);
     expect(result.herb).toBe('');
   });
+
+  it('should carry four-tier status on the result', () => {
+    expect(judgeWeight(10, 10, 1).status).toBe('perfect');
+    expect(judgeWeight(10.8, 10, 1).status).toBe('good');
+    expect(judgeWeight(11.5, 10, 1).status).toBe('warning');
+    expect(judgeWeight(13, 10, 1).status).toBe('fail');
+  });
 });
 
 describe('getWeightStatus', () => {

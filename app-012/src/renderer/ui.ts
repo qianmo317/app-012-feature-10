@@ -1,4 +1,23 @@
-import type { Prescription, WeighResult } from '../types';
+import type { Prescription, WeighResult, WeighAttempt, WeighFeedback, ScoreBreakdown, WeighStatus } from '../types';
+
+const STATUS_COLOR: Record<WeighStatus, string> = {
+  perfect: '#ffd700',
+  good: '#9acd32',
+  warning: '#ff8c42',
+  fail: '#ff4444',
+};
+
+/** 浅色面板（结算屏）上用的深色系 */
+const STATUS_COLOR_DARK: Record<WeighStatus, string> = {
+  perfect: '#b8860b',
+  good: '#6b8e23',
+  warning: '#c0392b',
+  fail: '#c0392b',
+};
+
+function fmtDelta(deltaG: number): string {
+  return `${deltaG > 0 ? '+' : ''}${deltaG.toFixed(1)}`;
+}
 
 export class UIRenderer {
   prescriptionX: number = 20;
@@ -164,6 +183,49 @@ export class UIRenderer {
     ctx.fillText(`最高分: ${highestScore}  最高关卡: ${highestLevel}`, cx, cy + 120);
   }
 
+  /** 确认称重后的四档即时反馈：准信 / 压线提示 / 整味重抓（第几回、上一回差多少） */
+  drawWeighFeedback(ctx: CanvasRenderingContext2D, canvasW: number, feedback: WeighFeedback): void {
+    const color = STATUS_COLOR[feedback.status];
+    const delta = fmtDelta(feedback.deltaG);
+
+    let main = '';
+    if (feedback.status === 'perfect') {
+      main = `✓ ${feedback.herb} 称得刚刚好 —— 准！`;
+    } else if (feedback.status === 'good') {
+      main = `✓ ${feedback.herb} 压线通过（差 ${delta}g）· 下回再校一校`;
+    } else {
+      main = `✗ ${feedback.herb} 偏出 ${delta}g · 整味重抓（第 ${feedback.attempt} 回）`;
+    }
+
+    let sub = '';
+    if (feedback.prevDelta !== null) {
+      sub = `上一回差 ${fmtDelta(feedback.prevDelta)}g`;
+    }
+
+    const w = 480;
+    const h = sub ? 58 : 40;
+    const x = (canvasW - w) / 2;
+    const y = 54;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+
+    ctx.fillStyle = color;
+    ctx.font = 'bold 16px "Microsoft YaHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(main, canvasW / 2, sub ? y + 20 : y + h / 2);
+
+    if (sub) {
+      ctx.fillStyle = '#ddd';
+      ctx.font = '13px "Microsoft YaHei", sans-serif';
+      ctx.fillText(sub, canvasW / 2, y + 44);
+    }
+  }
+
   drawReview(ctx: CanvasRenderingContext2D, canvasW: number, canvasH: number, herb: string, options: number[], selected: number | null, result: boolean | null): void {
     const cx = canvasW / 2;
     const cy = canvasH / 2;
@@ -214,44 +276,170 @@ export class UIRenderer {
     }
   }
 
-  drawResult(ctx: CanvasRenderingContext2D, canvasW: number, canvasH: number, score: number, level: number, results: WeighResult[], passed: boolean): void {
+  /** 结算屏：总分 + 每味药分项（基础/精度/连击/时间）+ 重抓记录 */
+  drawResult(
+    ctx: CanvasRenderingContext2D,
+    canvasW: number,
+    canvasH: number,
+    score: number,
+    level: number,
+    results: WeighResult[],
+    scoreDetails: Array<{ herb: string; breakdown: ScoreBreakdown }>,
+    attempts: WeighAttempt[],
+    passed: boolean
+  ): void {
     const cx = canvasW / 2;
-    const cy = canvasH / 2;
+
+    // 每味成功药一行分项；重抓记录 = 同一味药抓过两回及以上
+    const lines = results.map(r => {
+      const detail = scoreDetails.find(d => d.herb === r.herb);
+      const breakdown = detail ? detail.breakdown : { base: 0, precisionBonus: 0, comboBonus: 0, timePenalty: 0, total: 0 };
+      return { result: r, breakdown };
+    });
+    const byHerb = new Map<string, WeighAttempt[]>();
+    for (const a of attempts) {
+      const list = byHerb.get(a.herb);
+      if (list) list.push(a);
+      else byHerb.set(a.herb, [a]);
+    }
+    const reweighs: Array<{ herb: string; tries: WeighAttempt[] }> = [];
+    for (const [herb, tries] of byHerb) {
+      if (tries.length > 1) reweighs.push({ herb, tries });
+    }
+
+    const rowH = 22;
+    const headH = 24;
+    const reweighRowH = 20;
+    const reweighRows = Math.max(1, reweighs.length);
+    const panelW = Math.min(620, canvasW - 40);
+    const panelH = 92 + headH + lines.length * rowH + 24 + 24 + reweighRows * reweighRowH + 66;
+    const x0 = cx - panelW / 2;
+    const y0 = Math.max(8, (canvasH - panelH) / 2);
 
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(0, 0, canvasW, canvasH);
 
     ctx.fillStyle = '#fff8f0';
-    ctx.fillRect(cx - 200, cy - 180, 400, 360);
+    ctx.fillRect(x0, y0, panelW, panelH);
     ctx.strokeStyle = '#8b6914';
     ctx.lineWidth = 3;
-    ctx.strokeRect(cx - 200, cy - 180, 400, 360);
+    ctx.strokeRect(x0, y0, panelW, panelH);
 
+    let y = y0 + 30;
     ctx.fillStyle = passed ? '#228b22' : '#dc143c';
-    ctx.font = 'bold 28px "Microsoft YaHei", sans-serif';
+    ctx.font = 'bold 26px "Microsoft YaHei", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(passed ? '关卡通过！' : '关卡失败', cx, cy - 140);
+    ctx.fillText(passed ? '关卡通过！' : '关卡失败', cx, y);
 
+    y += 32;
     ctx.fillStyle = '#333';
-    ctx.font = '18px sans-serif';
-    ctx.fillText(`第${level}关  得分: ${score}`, cx, cy - 100);
+    ctx.font = 'bold 17px "Microsoft YaHei", sans-serif';
+    ctx.fillText(`第${level}关  总分: ${score}`, cx, y);
 
-    results.forEach((r, i) => {
-      const ry = cy - 60 + i * 28;
-      const color = r.ok ? '#228b22' : '#dc143c';
-      ctx.fillStyle = color;
-      ctx.font = '14px sans-serif';
+    // ---- 分项表 ----
+    y += 26;
+    const col = {
+      herb: x0 + 18,
+      weigh: x0 + 108,
+      status: x0 + 240,
+      base: x0 + 306,
+      precision: x0 + 362,
+      combo: x0 + 418,
+      time: x0 + 474,
+      total: x0 + 548,
+    };
+
+    ctx.font = 'bold 13px "Microsoft YaHei", sans-serif';
+    ctx.fillStyle = '#8b4513';
+    ctx.textAlign = 'left';
+    ctx.fillText('药名', col.herb, y);
+    ctx.fillText('目标/实称', col.weigh, y);
+    ctx.textAlign = 'center';
+    ctx.fillText('判定', col.status, y);
+    ctx.fillText('基础', col.base, y);
+    ctx.fillText('精度', col.precision, y);
+    ctx.fillText('连击', col.combo, y);
+    ctx.fillText('时间', col.time, y);
+    ctx.fillText('小计', col.total, y);
+
+    y += 6;
+    ctx.strokeStyle = '#d4a574';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0 + 12, y);
+    ctx.lineTo(x0 + panelW - 12, y);
+    ctx.stroke();
+
+    ctx.font = '13px "Microsoft YaHei", sans-serif';
+    for (const { result, breakdown } of lines) {
+      y += rowH;
+      const r = result;
       ctx.textAlign = 'left';
-      ctx.fillText(`${r.herb}: 目标${r.target}g 实际${r.actual.toFixed(1)}g 差${r.deltaG > 0 ? '+' : ''}${r.deltaG.toFixed(1)}g`, cx - 160, ry);
-    });
+      ctx.fillStyle = '#333';
+      ctx.fillText(r.herb, col.herb, y);
+      ctx.fillText(`${r.target}g / ${r.actual.toFixed(1)}g`, col.weigh, y);
 
+      ctx.textAlign = 'center';
+      ctx.fillStyle = STATUS_COLOR_DARK[r.status];
+      ctx.fillText(r.status === 'perfect' ? '准' : '压线', col.status, y);
+
+      ctx.fillStyle = '#333';
+      ctx.fillText(String(breakdown.base), col.base, y);
+      ctx.fillText(`+${breakdown.precisionBonus}`, col.precision, y);
+      ctx.fillText(`+${breakdown.comboBonus}`, col.combo, y);
+      ctx.fillStyle = breakdown.timePenalty < 0 ? '#c0392b' : '#333';
+      ctx.fillText(String(breakdown.timePenalty), col.time, y);
+      ctx.fillStyle = '#8b4513';
+      ctx.font = 'bold 13px "Microsoft YaHei", sans-serif';
+      ctx.fillText(String(breakdown.total), col.total, y);
+      ctx.font = '13px "Microsoft YaHei", sans-serif';
+    }
+
+    // ---- 重抓记录 ----
+    y += rowH + 14;
+    ctx.strokeStyle = '#d4a574';
+    ctx.beginPath();
+    ctx.moveTo(x0 + 12, y);
+    ctx.lineTo(x0 + panelW - 12, y);
+    ctx.stroke();
+
+    y += 20;
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#8b4513';
+    ctx.font = 'bold 14px "Microsoft YaHei", sans-serif';
+    ctx.fillText('重抓记录', x0 + 18, y);
+
+    ctx.font = '12px "Microsoft YaHei", sans-serif';
+    if (reweighs.length === 0) {
+      y += reweighRowH;
+      ctx.fillStyle = '#888';
+      ctx.fillText('本关全部一次抓准，无重抓', x0 + 18, y);
+    } else {
+      for (const { herb, tries } of reweighs) {
+        y += reweighRowH;
+        ctx.fillStyle = '#333';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${herb} 共抓 ${tries.length} 回：`, x0 + 18, y);
+        let tx = x0 + 118;
+        tries.forEach((t, i) => {
+          const label = `${i + 1}) ${fmtDelta(t.deltaG)}g`;
+          ctx.fillStyle = STATUS_COLOR_DARK[t.status];
+          ctx.fillText(label, tx, y);
+          tx += ctx.measureText(label).width + 14;
+        });
+        ctx.fillStyle = '#228b22';
+        ctx.fillText('✓', tx, y);
+      }
+    }
+
+    // ---- 按钮 ----
     this.buttonRects = [];
     const btnLabel = passed ? '下一关' : '重试';
-    const bx = cx - 60;
-    const by = cy + 140;
     const bw = 120;
     const bh = 40;
+    const bx = cx - bw / 2;
+    const by = y0 + panelH - 52;
 
     ctx.fillStyle = '#6b4e23';
     ctx.fillRect(bx, by, bw, bh);

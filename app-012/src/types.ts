@@ -11,12 +11,31 @@ export interface Prescription {
   items: PrescriptionItem[];
 }
 
+export type WeighStatus = 'perfect' | 'good' | 'warning' | 'fail';
+
 export interface WeighResult {
   herb: string;
   target: number;
   actual: number;
   ok: boolean;
   deltaG: number;
+  status: WeighStatus;
+}
+
+/** 一次确认称重的记录（含重抓），attempt 为该药的第几回 */
+export interface WeighAttempt extends WeighResult {
+  attempt: number;
+}
+
+/** 确认称重后的即时反馈：四档结果 + 重抓次第信息 */
+export interface WeighFeedback {
+  herb: string;
+  status: WeighStatus;
+  target: number;
+  actual: number;
+  deltaG: number;
+  attempt: number;
+  prevDelta: number | null;
 }
 
 export interface GameState {
